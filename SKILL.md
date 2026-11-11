@@ -1,8 +1,6 @@
 ---
 name: powershell-invocation
-description: 'PowerShell Invocation Standards. Use when an agent runs, generates, reviews, or troubleshoots PowerShell commands on Windows. PowerShell 7.x / pwsh.exe only; no Windows PowerShell or automatic fallback. Covers shell tools, quoting, escaping, LiteralPath, Unicode paths, UTF-8/BOM, encoding corruption, native arguments, Python/Node, cmd/bat, exit codes, redirection, timeouts, and background process lifecycle. Load before executing PowerShell commands to prevent parsing, encoding, and process-management errors.'
-user-invocable: true
-disable-model-invocation: false
+description: 'Run, generate, review, or troubleshoot PowerShell commands on Windows using PowerShell 7.x only. Covers invocation, paths, encoding, native exit codes, and process lifecycle.'
 ---
 
 # PowerShell Invocation Standards
@@ -19,7 +17,7 @@ For AI agents executing commands through terminals, CLIs, and shell tools. Ensur
 - Do not use `Import-Module -UseWindowsPowerShell`, `WinPSCompatSession`, or implicit compatibility processes. A module requiring an older engine is a blocker. Where supported and needed, use session-specific `DisableImplicitWinCompat` configuration without changing global settings.
 - Check minor-version requirements for 7.3, 7.4, and 7.5 features. Choose alternatives within 7.x when a feature is missing; never change to an older engine.
 
-Examples use Windows paths. Official documentation was reviewed on 2026-11-07. The locally verified executable is `C:\Program Files\PowerShell\7\pwsh.exe`, version 7.6.9; verify the path and version in other environments.
+Examples use Windows paths. Verify the actual engine and version in each environment; see the [validation record](./references/07-official-sources.md).
 
 This skill cannot override host-tool contracts, safety policies, approvals, or user instructions. In particular, `shellId`, `initial_wait`, `mode`, and `detach` are **agent-tool fields, not PowerShell parameters**.
 
@@ -35,6 +33,7 @@ Minimal checks when needed:
 if ($PSVersionTable.PSEdition -ne 'Core' -or $PSVersionTable.PSVersion.Major -ne 7) {
     throw 'PowerShell 7.x (Core) is required; no fallback is allowed.'
 }
+$engine = Join-Path -Path $PSHOME -ChildPath 'pwsh.exe'
 $PSVersionTable | Select-Object PSVersion, PSEdition, Platform
 Get-Location
 Get-Command -Name pwsh.exe, python.exe, node.exe -ErrorAction SilentlyContinue |
@@ -52,10 +51,10 @@ Do not dump all environment variables, configuration, or credentials. Optional d
 | Executable path contains spaces or is in a variable | `& $exe @nativeArgs` | `$exe` contains only the executable path |
 | Script in the current directory | `& '.\scripts\task.ps1' -Name $name` | Receive values through script `param()` |
 | Definitions needed in the current scope | `. '.\definitions.ps1'` | Dot-source trusted scripts only when necessary |
-| Clean child PowerShell | `pwsh.exe -NoLogo -NoProfile -NonInteractive -File $script` | Do not default to `-ExecutionPolicy Bypass` |
-| Short, fixed PowerShell code | `pwsh.exe ... -Command 'Get-Date'` | The outer shell parses quoting first |
+| Clean child PowerShell | `& $engine -NoLogo -NoProfile -NonInteractive -File $script` | Use the verified absolute engine path; do not default to `-ExecutionPolicy Bypass` |
+| Short, fixed PowerShell code | `& $engine -NoLogo -NoProfile -NonInteractive -Command 'Get-Date'` | The outer shell parses quoting first |
 | PowerShell code crosses multiple layers | Prefer a `.ps1` file, then `-EncodedCommand` | Base64 must encode UTF-16LE, not UTF-8 |
-| PowerShell code through stdin | Here-string piped to `pwsh ... -Command -` | Statement-by-statement parsing; prefer files for complex control flow |
+| PowerShell code through stdin | Here-string piped to `& $engine ... -Command -` | Statement-by-statement parsing; prefer files for complex control flow |
 | Multiline Python or Node | Single-quoted here-string piped to `python -` or `node -` | Agree on encoding at both ends |
 | Batch environment setup required | One `cmd.exe /d /c 'call ... && ...'` | Batch environment changes do not flow back to the parent |
 | Separate working directory, output files, or process handle needed | `Start-Process`, or .NET `Process` when necessary | `Start-Process -ArgumentList` does not preserve individual argv boundaries |
@@ -93,21 +92,25 @@ This is not a universal switch. Console APIs may be unavailable in some hosts; d
 - Write files with explicit `-Encoding utf8NoBOM` or the consumer's agreed encoding. Use `.NET WriteAllText` with `UTF8Encoding($false)` for exact byte output.
 - Default script and documentation sources to UTF-8 without BOM. Add a BOM only when the actual data consumer requires it, never to preserve an older PowerShell execution branch.
 - Read whole JSON with `Get-Content -LiteralPath ... -Raw -Encoding UTF8`. Do not treat `Format-Table` output as data.
-- Set `$env:PYTHONIOENCODING = 'utf-8'` before Python starts, or use `-X utf8` as appropriate. These settings affect Python, not the entire pipeline.
+- When Python stdout or stderr uses a legacy encoding but the terminal expects UTF-8, use Python `-X utf8` or set `$env:PYTHONIOENCODING = 'utf-8'` before it starts. These do not change other programs or repair bytes already decoded incorrectly.
+- For a native program that actually emits GBK/CP936, configure that program for UTF-8 when supported; otherwise decode its stdout and stderr with the program's actual encoding before writing Unicode to the UTF-8 terminal.
 - `chcp 65001` changes the active console code page, not all file, process, and tool encoding behavior.
 
-Required reference: [Encoding and data](./references/03-encoding-and-data.md).
+When diagnosing encoding or moving text across process boundaries, consult [Encoding and data](./references/03-encoding-and-data.md).
 
 ### 5. Check errors and exit codes
 
 ```powershell
-$ErrorActionPreference = 'Stop'
-$exe = (Get-Command -Name git.exe -CommandType Application -ErrorAction Stop).Source
-$nativeArgs = @('--version')
-& $exe @nativeArgs
-$nativeExit = $LASTEXITCODE
-if ($nativeExit -ne 0) {
-    throw "git failed with exit code $nativeExit"
+& {
+    $ErrorActionPreference = 'Stop'
+    if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+    $exe = (Get-Command -Name git.exe -CommandType Application -ErrorAction Stop).Source
+    $nativeArgs = @('--version')
+    & $exe @nativeArgs
+    $nativeExit = $LASTEXITCODE
+    if ($nativeExit -ne 0) { throw "git failed with exit code $nativeExit" }
 }
 ```
 
@@ -146,7 +149,7 @@ Tool adaptation and templates: [Agent tools and recipes](./references/05-agent-t
 
 ## Validation and reporting
 
-Report the actual PowerShell version, working directory/executable, relevant encoding, exit code, and observed outcome. Mark untested hosts and versions explicitly.
+Report the outcome and any task-relevant version, executable, encoding, exit code, or verification details. For compatibility diagnostics, identify the actual engine and mark untested hosts and versions explicitly.
 
 The offline [self-test](./scripts/Test-PowerShellInvocation.ps1) and [argv probe](./scripts/argv_probe.py) require no package installation. The self-test writes only to its own randomly named temporary directory and removes it afterwards. Python-specific checks are skipped if Python is unavailable. Never pass secrets to the argv probe: it prints its arguments.
 
@@ -155,5 +158,5 @@ $test = Join-Path -Path $HOME -ChildPath '.copilot\skills\powershell-invocation\
 & $test
 ```
 
-Run child tests only with a verified `pwsh.exe -NoLogo -NoProfile -NonInteractive -File $test`. The script requires Core and PowerShell 7, checks the exact major version, and never falls back. Unicode fixtures are constructed from code points to preserve non-ASCII test coverage without depending on the source file's encoding.
+Run child tests only with the verified path: `& $engine -NoLogo -NoProfile -NonInteractive -File $test`. The script requires Core and PowerShell 7, checks the exact major version, and never falls back. Unicode fixtures are constructed from code points to preserve non-ASCII test coverage without depending on the source file's encoding.
 

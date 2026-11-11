@@ -20,7 +20,8 @@ $results = [System.Collections.Generic.List[object]]::new()
 $utf8 = [System.Text.UTF8Encoding]::new($false)
 $utf8Bom = [System.Text.UTF8Encoding]::new($true)
 $unicodeText = ([string][char]0x4E2D) + ([string][char]0x6587) + ' ' + [char]::ConvertFromUtf32(0x1F680)
-$tempRoot = Join-Path -Path ([IO.Path]::GetTempPath()) -ChildPath ('agent-ps-check-' + [guid]::NewGuid().ToString('N'))
+$tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+$tempRoot = Join-Path -Path $tempBase -ChildPath ('agent-ps-check-' + [guid]::NewGuid().ToString('N'))
 $engine = Join-Path -Path $PSHOME -ChildPath 'pwsh.exe'
 $probe = Join-Path -Path $PSScriptRoot -ChildPath 'argv_probe.py'
 $oldOutputEncoding = $OutputEncoding
@@ -83,6 +84,15 @@ try {
         $version = $json | ConvertFrom-Json -ErrorAction Stop
         Assert-Equal 'Core' $version.PSEdition 'Child edition is not Core'
         Assert-Equal 7 $version.Major 'Child major version is not 7'
+    }
+
+    Invoke-Check 'Verified engine path bypasses command shadowing' {
+        function pwsh.exe { throw 'A bare command name was invoked' }
+        $payload = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("Write-Output 'verified'"))
+        $actual = & $engine -NoLogo -NoProfile -NonInteractive -EncodedCommand $payload
+        $code = $LASTEXITCODE
+        Assert-Equal 0 $code 'Verified engine invocation failed'
+        Assert-Equal 'verified' ([string]$actual) 'The verified engine was not used'
     }
 
     Invoke-Check 'LiteralPath and exact UTF-8 round trip' {
@@ -171,6 +181,26 @@ try {
         Assert-Equal 7 $code 'Native exit code was not preserved'
     }
 
+    if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+        Invoke-Check 'Manual native exit handling preserves host preference' {
+            & {
+                $PSNativeCommandUseErrorActionPreference = $true
+                $payload = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('exit 7'))
+                $code = & {
+                    $ErrorActionPreference = 'Stop'
+                    $PSNativeCommandUseErrorActionPreference = $false
+                    & $engine -NoLogo -NoProfile -NonInteractive -EncodedCommand $payload
+                    $LASTEXITCODE
+                }
+                Assert-Equal 7 $code 'Manual exit-code check was skipped'
+                Assert-Equal $true $PSNativeCommandUseErrorActionPreference 'Host preference was not preserved'
+            }
+        }
+    }
+    else {
+        Add-Skip 'Manual native exit handling preserves host preference' 'Native error preference is unavailable in this PowerShell version'
+    }
+
     Invoke-Check 'EncodedCommand uses UTF-16LE and preserves Unicode' {
         $source = '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); Write-Output ' + "'" + $unicodeText + "'"
         $payload = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($source))
@@ -186,6 +216,7 @@ try {
             FilePath = $engine
             ArgumentList = @('-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', $payload)
             WorkingDirectory = $tempRoot
+            WindowStyle = 'Hidden'
             Wait = $true
             PassThru = $true
             ErrorAction = 'Stop'
@@ -219,6 +250,51 @@ try {
         if ($pythonCommand) { $PythonExecutable = $pythonCommand.Source }
     }
     if (-not [string]::IsNullOrWhiteSpace($PythonExecutable)) {
+        function Invoke-PythonStreamProbe {
+            param([string]$StreamEncoding, [Text.Encoding]$Decoder)
+            $startInfo = [Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = $PythonExecutable
+            $startInfo.UseShellExecute = $false
+            $startInfo.CreateNoWindow = $true
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+            $startInfo.StandardOutputEncoding = $Decoder
+            $startInfo.StandardErrorEncoding = $Decoder
+            $startInfo.Environment['PYTHONIOENCODING'] = $StreamEncoding
+            $startInfo.ArgumentList.Add('-c')
+            $startInfo.ArgumentList.Add('import sys; sys.stdout.write("\u4e2d\u6587 stdout"); sys.stderr.write("\u4e2d\u6587 stderr")')
+            $process = [Diagnostics.Process]::new()
+            $process.StartInfo = $startInfo
+            $started = $false
+            try {
+                $started = $process.Start()
+                Assert-True $started 'Python process did not start'
+                $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+                $stderrTask = $process.StandardError.ReadToEndAsync()
+                if (-not $process.WaitForExit(15000)) { throw 'Python stream probe timed out' }
+                $stdout = $stdoutTask.GetAwaiter().GetResult()
+                $stderr = $stderrTask.GetAwaiter().GetResult()
+                Assert-Equal 0 $process.ExitCode 'Python stream probe failed'
+                $chinese = ([string][char]0x4E2D) + [char]0x6587
+                Assert-Equal ($chinese + ' stdout') $stdout 'Native stdout changed'
+                Assert-Equal ($chinese + ' stderr') $stderr 'Native stderr changed'
+            }
+            finally {
+                if ($started -and -not $process.HasExited) {
+                    $process.Kill()
+                    $process.WaitForExit()
+                }
+                $process.Dispose()
+            }
+        }
+
+        Invoke-Check 'Python UTF-8 stdout and stderr round trip' {
+            Invoke-PythonStreamProbe -StreamEncoding 'utf-8' -Decoder $utf8
+        }
+        Invoke-Check 'GBK native stdout and stderr decode correctly' {
+            Invoke-PythonStreamProbe -StreamEncoding 'gbk' -Decoder ([Text.Encoding]::GetEncoding(936))
+        }
+
         Invoke-Check 'Python stdin code and stdout UTF-8 round trip' {
             $source = "print('" + $unicodeText + "')"
             $actual = $source | & $PythonExecutable -X utf8 -
@@ -274,7 +350,17 @@ try {
         }
     }
     else {
-        Add-Skip 'Python stdin and argv probes' 'python.exe unavailable; use -PythonExecutable with a trusted absolute executable path'
+        $reason = 'python.exe unavailable; use -PythonExecutable with a trusted absolute executable path'
+        foreach ($checkName in @(
+            'Python UTF-8 stdout and stderr round trip',
+            'GBK native stdout and stderr decode correctly',
+            'Python stdin code and stdout UTF-8 round trip',
+            'Python argv safe subset across engine modes',
+            'Modern native argv retains empty quotes and trailing slash',
+            'Native stdout direct redirection preserves binary bytes'
+        )) {
+            Add-Skip $checkName $reason
+        }
     }
 }
 finally {
@@ -283,7 +369,17 @@ finally {
     [Console]::OutputEncoding = $oldConsoleOutput
     $env:PYTHONIOENCODING = $oldPythonEncoding
     if (Test-Path -LiteralPath $tempRoot -PathType Container) {
-        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction Stop
+        $resolved = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $tempRoot -ErrorAction Stop).ProviderPath)
+        $expected = [IO.Path]::GetFullPath($tempRoot)
+        $boundary = $tempBase.TrimEnd([char[]]@('\', '/')) + [IO.Path]::DirectorySeparatorChar
+        $item = Get-Item -LiteralPath $resolved -Force -ErrorAction Stop
+        if (-not [string]::Equals($resolved, $expected, [StringComparison]::OrdinalIgnoreCase) -or
+            -not $resolved.StartsWith($boundary, [StringComparison]::OrdinalIgnoreCase) -or
+            -not [IO.Path]::GetFileName($resolved).StartsWith('agent-ps-check-', [StringComparison]::Ordinal) -or
+            ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Refusing to clean up an unexpected temporary directory.'
+        }
+        Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction Stop
     }
 }
 

@@ -117,14 +117,15 @@ if ($code -ne 0) { throw "task.ps1 failed: $code" }
 ### `-Command`: short, fixed, auditable code only
 
 ```powershell
-pwsh.exe -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
+$engine = Join-Path -Path $PSHOME -ChildPath 'pwsh.exe'
+& $engine -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
 if ($LASTEXITCODE -ne 0) { throw 'Version query failed' }
 ```
 
-Here the outer shell is PowerShell, so single quotes prevent premature parent expansion. In **cmd**, single quotes do not provide that protection:
+Here the outer shell is PowerShell, so single quotes prevent premature parent expansion. In **cmd**, single quotes do not provide that protection. Replace the example path with the verified engine path:
 
 ```cmd
-pwsh.exe -NoLogo -NoProfile -NonInteractive -Command "$PSVersionTable.PSVersion.ToString()"
+"C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo -NoProfile -NonInteractive -Command "$PSVersionTable.PSVersion.ToString()"
 ```
 
 - The command string and following text are interpreted as PowerShell source. Never interpolate untrusted data into it.
@@ -135,9 +136,10 @@ pwsh.exe -NoLogo -NoProfile -NonInteractive -Command "$PSVersionTable.PSVersion.
 ### `-EncodedCommand`: quoting transport, not encryption
 
 ```powershell
+$engine = Join-Path -Path $PSHOME -ChildPath 'pwsh.exe'
 $source = 'Write-Output ([char]0x4E2D + [string][char]0x6587)'
 $payload = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($source))
-pwsh.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand $payload
+& $engine -NoLogo -NoProfile -NonInteractive -EncodedCommand $payload
 if ($LASTEXITCODE -ne 0) { throw 'Encoded command failed' }
 ```
 
@@ -146,11 +148,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Encoded command failed' }
 ### stdin: `-Command -` / `-File -`
 
 ```powershell
+$engine = Join-Path -Path $PSHOME -ChildPath 'pwsh.exe'
 @'
 $ErrorActionPreference = 'Stop'
 Write-Output 'stdin command'
 exit 0
-'@ | pwsh.exe -NoLogo -NoProfile -NonInteractive -Command -
+'@ | & $engine -NoLogo -NoProfile -NonInteractive -Command -
 $code = $LASTEXITCODE
 if ($code -ne 0) { throw "stdin command failed: $code" }
 ```

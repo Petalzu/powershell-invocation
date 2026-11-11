@@ -106,7 +106,8 @@ Prefer direct `& $exe @nativeArgs` for ordinary CLI work, streaming output, and 
 - Set `-WorkingDirectory` to a confirmed absolute file-system directory. Wildcards are unsupported; paths with wildcard-like characters require verification.
 - Redirect stdout/stderr to different files. Their encoding is a separate boundary, not controlled by a later `Set-Content -Encoding` option.
 - `-Environment` requires 7.4+. Earlier 7.x versions can set/restore environment values in a controlled invocation without switching engines.
-- `-Verb RunAs` involves elevation/interaction and is not an automatic permission repair. Do not combine `-NoNewWindow` with `-WindowStyle`.
+- For a noninteractive Windows helper, use `-WindowStyle Hidden` when a separate window is unnecessary; leave genuinely interactive tools visible. Do not combine `-NoNewWindow` with `-WindowStyle`.
+- `-Verb RunAs` involves elevation/interaction and is not an automatic permission repair.
 
 A fixed Base64 payload avoids complex command-line arguments in this example:
 
@@ -120,6 +121,7 @@ $startOptions = @{
     FilePath = $engine
     ArgumentList = @('-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', $payload)
     WorkingDirectory = $env:TEMP
+    WindowStyle = 'Hidden'
     Wait = $true
     PassThru = $true
     ErrorAction = 'Stop'

@@ -71,7 +71,7 @@ Coverage means the principal agent invocation methods, data boundaries, and comm
 | [Parser.ParseFile](https://learn.microsoft.com/en-us/dotnet/api/system.management.automation.language.parser.parsefile?view=powershellsdk-7.4.0) | AST/tokens/errors without execution | Check syntax without side effects; parsing is not behavioral validation |
 | [Python subprocess](https://docs.python.org/3/library/subprocess.html) | argv, shell=False, encoding, check, run timeout kill/wait versus Popen behavior | Explicit encoding and distinct timeout cleanup semantics |
 | [Node child_process](https://nodejs.org/api/child_process.html) | spawn/execFile/shell distinctions, buffer limits, batch files, environment casing | Explicit engine/argv; handle error/status/close; avoid dynamic exec strings |
-| [VS Code Agent Skills](https://code.visualstudio.com/docs/agent-customization/agent-skills) | User-level directories, metadata, progressive loading, discovery is not guaranteed invocation | Match directory/slug, keep a specific discovery description, and split references |
+| [VS Code Agent Skills](https://code.visualstudio.com/docs/agent-customization/agent-skills) | Copilot and Codex personal directories, default invocation controls, progressive loading, and fresh-chat verification (reviewed 2026-11-11) | Preserve automatic and user invocation defaults; install for each intended harness and verify discovery |
 
 Additional reviewed project references: [git diff --exit-code](https://git-scm.com/docs/git-diff#Documentation/git-diff.txt---exit-code) and [ripgrep official manual source, EXIT STATUS](https://raw.githubusercontent.com/BurntSushi/ripgrep/master/crates/core/flags/doc/template.rg.1). `rg --quiet` may return 0 after a match despite another error; it is not proof every input was error-free. Consult installed-version help when executing.
 
@@ -92,7 +92,7 @@ Agent fields such as shellId, detach, and initial wait ranges come from the curr
 
 A general-use baseline does not claim a feature never existed experimentally. Check the actual installed version/capability and official documentation.
 
-## 7. Validation scope
+## 7. Historical validation: 2026-11-07
 
 All validation ran in PowerShell 7.x only. Historical older-engine tests are not support claims or permitted entry points.
 
@@ -116,4 +116,8 @@ Coverage includes LiteralPath, UTF-8 with/without BOM, UTF-16LE data, binary byt
 Machine interfaces must isolate diagnostics/progress and verify the host's output protocol. Skill discovery does not guarantee automatic selection for every related request.
 
 Untested: other 7.x minor versions, Linux/macOS, every third-party CLI, console-less/remote hosts, real MSVC builds, external downloads, and persistent-service approvals/lifetimes. Older engines are prohibited and are not run for verification.
+
+## 8. Update validation: 2026-11-11
+
+On the local Windows host, PowerShell 7.6.10/Core completed the revised offline self-test: **20 passed, 0 failed, 0 skipped**, including the verified-engine shadowing check, locally scoped native error preference, and separate UTF-8/GBK native stdout and stderr checks. The temporary directory was removed. A separate run without Python passed 14 checks and reported six individual skips. The local skill-creator validator accepted the frontmatter, and 44 fenced PowerShell examples and 31 relative resource links were checked. These results do not establish discovery or automatic selection in every client, or behavior on untested engines and hosts.
 

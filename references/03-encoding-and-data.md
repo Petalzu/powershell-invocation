@@ -16,6 +16,14 @@ Official references: [about_Character_Encoding](https://learn.microsoft.com/en-u
 
 Text already replaced with `?` or Unicode replacement character U+FFFD may have lost information. Preserve original bytes and reread them with the correct encoding; do not repeatedly guess at UTF-8 conversions. Never upload user files to an external transcoding service.
 
+### Diagnose garbled terminal output
+
+First compare PowerShell output with the actual native producer. In a redirected terminal, a Python process may emit GBK while the tool expects UTF-8, even though PowerShell's own Chinese text displays correctly. Check Python's `sys.stdout.encoding` and `sys.stderr.encoding`, then use `python -X utf8` or set `PYTHONIOENCODING=utf-8` **before that process starts**. Test both streams with real non-ASCII text; rendering a few ASCII lines is not a sufficient check.
+
+For a program restricted to GBK/CP936, changing the terminal or `[Console]::OutputEncoding` does not force the child to emit UTF-8. Prefer its explicit UTF-8 option. Otherwise capture stdout and stderr separately using `.NET ProcessStartInfo.StandardOutputEncoding` and `StandardErrorEncoding` set to `[Text.Encoding]::GetEncoding(936)`, drain both concurrently, and then write the resulting Unicode strings to a UTF-8 terminal. Preserve the exit code. See [process handling](./04-errors-output-and-processes.md) for stream and lifetime boundaries and the [self-test](../scripts/Test-PowerShellInvocation.ps1) for verified UTF-8 and GBK stream examples.
+
+Do not permanently switch the system locale, console code page, profile, or environment merely as a blanket fix. Profile changes require authorization and should preserve any explicit user encoding preference. A process run without a profile needs its own settings.
+
 ## 2. PowerShell 7.x encoding rules
 
 Only PowerShell 7.x execution is supported. Do not retain older-engine encoding or execution branches.

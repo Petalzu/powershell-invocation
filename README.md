@@ -101,7 +101,22 @@ Do not copy `.git`, credentials, or unrelated user configuration into a skill in
 
 Copy the same files into `.github\skills\powershell-invocation` at the intended repository root. Keep the relative structure intact. Review any existing skill of the same name rather than overwriting it silently.
 
-Other agents may use their own supported locations, such as `.agents\skills\powershell-invocation` or `.claude\skills\powershell-invocation`. Check the current host documentation rather than assuming all clients share discovery settings. See the [official source record](./references/07-official-sources.md).
+VS Code's documented personal skill location for the Codex harness is `~\.agents\skills\powershell-invocation`; Copilot uses `~\.copilot\skills\powershell-invocation`. Each host discovers its own locations, so a Copilot installation alone does not establish Codex discovery. Other harnesses use their own locations. Check the current host documentation and start a fresh chat in the intended harness to verify the skill appears. See the [official source record](./references/07-official-sources.md).
+
+The frontmatter omits optional invocation controls: VS Code documents the default as both user-invocable and automatically discoverable. This also avoids fields rejected by some other skill validators. Discovery does not guarantee that a model selects the skill for every request.
+
+## Terminal text encoding
+
+If PowerShell prints Chinese correctly but Python stdout or stderr is garbled, inspect the producer's stream encoding. When the terminal expects UTF-8, use `python -X utf8` for a single command or set `PYTHONIOENCODING=utf-8` before starting Python. For a user who explicitly wants this default in new PowerShell 7.x sessions, an existing explicit setting can be preserved with:
+
+```powershell
+if ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.PSVersion.Major -eq 7 -and
+    [string]::IsNullOrEmpty($env:PYTHONIOENCODING)) {
+    $env:PYTHONIOENCODING = 'utf-8'
+}
+```
+
+A profile setting affects future sessions that load the profile; `-NoProfile` calls need their own settings. This changes Python's standard streams, not every application or file. A pipeline that intentionally expects another encoding should set that encoding for the relevant process. For GBK-only applications, preserve and decode the actual bytes instead. See [encoding and data](./references/03-encoding-and-data.md).
 
 ## Usage
 
@@ -148,17 +163,17 @@ The self-test emits a JSON report with engine version, pass/fail/skip counts, in
 - Unicode/special-character paths and LiteralPath behavior.
 - Exact UTF-8 without/with BOM, UTF-16LE data, and binary bytes.
 - JSON array shape and Unicode values.
-- ErrorAction Stop, catch/finally, and a deliberately returned native exit code 7.
+- ErrorAction Stop, catch/finally, a deliberately returned native exit code 7, and scoped native error preferences.
 - UTF-16LE EncodedCommand transport and Start-Process ExitCode.
 - Generated non-ASCII PowerShell source without BOM.
-- Optional Python stdin/argv and modern quoted/empty arguments.
+- Optional Python stdin/argv, modern quoted/empty arguments, and UTF-8/GBK stdout and stderr decoding.
 - Native byte-preserving redirection on supported 7.x versions.
 
 It uses a randomly named task-owned temporary directory and removes it afterwards. It does not use the network, install dependencies, modify execution policy/profile, or start persistent services. Never pass secrets to the argv probe because it prints its arguments.
 
 ## Validation scope
 
-The skill was verified on PowerShell 7.6.9/Core: **16 self-tests passed, 0 failed, 0 skipped**. Its 40 PowerShell examples parsed, and metadata, resource links, and other-language examples were checked. See the [validation record](./references/07-official-sources.md) for details and limitations.
+The updated self-test was verified on PowerShell 7.6.10/Core: **20 passed, 0 failed, 0 skipped**. The skill metadata also passed the local skill-creator validator. See the [validation record](./references/07-official-sources.md) for the previous checks and limitations.
 
 Those results are not a promise for every 7.x release, third-party program, console-less host, remote session, or operating system. No older engine is used for validation.
 
