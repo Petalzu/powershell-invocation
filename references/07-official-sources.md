@@ -1,5 +1,7 @@
 # Official Sources, Version Boundaries, and Validation Record
 
+This file records supporting evidence and historical checks. Use the [entrypoint](../SKILL.md) for current execution defaults; earlier validation counts describe their respective snapshots.
+
 Documentation review date: 2026-11-07. This skill supports **PowerShell 7.x/Core only**, with no older-engine execution guidance or automatic fallback. The rules summarize reviewed official bodies, parameter sections, and notes in original wording rather than reproducing documentation at length. Microsoft Learn `view=` selects a version; canonical/default links may redirect to newer versions, so preserve the relevant 7.x feature boundaries.
 
 Coverage means the principal agent invocation methods, data boundaries, and common failures. It does not claim to enumerate every cmdlet, third-party argument parser, or terminal implementation. For an uncovered CLI, consult its official interface and verify minimal argv/byte behavior.
@@ -120,4 +122,12 @@ Untested: other 7.x minor versions, Linux/macOS, every third-party CLI, console-
 ## 8. Update validation: 2026-11-11
 
 On the local Windows host, PowerShell 7.6.10/Core completed the revised offline self-test: **20 passed, 0 failed, 0 skipped**, including the verified-engine shadowing check, locally scoped native error preference, and separate UTF-8/GBK native stdout and stderr checks. The temporary directory was removed. A separate run without Python passed 14 checks and reported six individual skips. The local skill-creator validator accepted the frontmatter, and 44 fenced PowerShell examples and 31 relative resource links were checked. These results do not establish discovery or automatic selection in every client, or behavior on untested engines and hosts.
+
+## 9. Concise invocation revision: 2026-11-13
+
+The entrypoint now favors short direct calls and conditional setup; references remove repeated bootstrap templates. Its content decreased from 175 to 58 lines (excluding trailing blank lines). Existing self-test scripts and their coverage were preserved.
+
+On Windows with PowerShell 7.6.10/Core, the offline self-test passed **20 checks, with 0 failures and 0 skips**, and removed its temporary files. The skill-creator validator accepted the skill. All 28 fenced PowerShell examples and the JSON example parsed successfully; relative resource links and anchors resolved. Markdown files retained UTF-8 without BOM and their CRLF line endings.
+
+Focused execution confirmed that a failed native command stops an `&&` chain and that explicit `exit $LASTEXITCODE` preserves exit 7 across the shell boundary. These checks validate the documented mechanics, not future model behavior or untested hosts/versions. No dependencies were installed or profiles/policies changed.
 
