@@ -76,20 +76,16 @@ try {
     [IO.Directory]::CreateDirectory($specialDirectory) | Out-Null
 
     Invoke-Check 'Child engine is PowerShell 7.x Core' {
-        $source = '$PSVersionTable | Select-Object PSEdition, @{Name="Major";Expression={$_.PSVersion.Major}} | ConvertTo-Json -Compress'
-        $payload = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($source))
-        $json = & $engine -NoLogo -NoProfile -NonInteractive -EncodedCommand $payload
+        $identity = @(& $engine -NoProfile -NonInteractive -Command '$PSVersionTable.PSEdition; $PSVersionTable.PSVersion.Major')
         $code = $LASTEXITCODE
         Assert-Equal 0 $code 'Child version query failed'
-        $version = $json | ConvertFrom-Json -ErrorAction Stop
-        Assert-Equal 'Core' $version.PSEdition 'Child edition is not Core'
-        Assert-Equal 7 $version.Major 'Child major version is not 7'
+        Assert-Equal 'Core' $identity[0] 'Child edition is not Core'
+        Assert-Equal '7' $identity[1] 'Child major version is not 7'
     }
 
     Invoke-Check 'Verified engine path bypasses command shadowing' {
         function pwsh.exe { throw 'A bare command name was invoked' }
-        $payload = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("Write-Output 'verified'"))
-        $actual = & $engine -NoLogo -NoProfile -NonInteractive -EncodedCommand $payload
+        $actual = & $engine -NoProfile -NonInteractive -Command "'verified'"
         $code = $LASTEXITCODE
         Assert-Equal 0 $code 'Verified engine invocation failed'
         Assert-Equal 'verified' ([string]$actual) 'The verified engine was not used'
@@ -137,6 +133,7 @@ try {
     }
 
     Invoke-Check 'JSON array shape and Unicode round trip' {
+        Assert-Equal '[]' (ConvertTo-Json -InputObject @() -Compress) 'Empty collection did not remain an array'
         $rows = @([pscustomobject]@{ Message = $unicodeText; Path = $specialDirectory })
         $json = ConvertTo-Json -InputObject $rows -Depth 5 -Compress
         Assert-True ($json.StartsWith('[')) 'Single-element collection did not remain an array'
@@ -175,21 +172,51 @@ try {
     }
 
     Invoke-Check 'Native exit 7 is preserved immediately' {
-        $payload = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('exit 7'))
-        & $engine -NoLogo -NoProfile -NonInteractive -EncodedCommand $payload
+        & $engine -NoProfile -NonInteractive -Command 'exit 7'
         $code = $LASTEXITCODE
         Assert-Equal 7 $code 'Native exit code was not preserved'
+    }
+
+    Invoke-Check 'Failed native step skips its dependent and exits the script with the original code' {
+        $wrapper = Join-Path $specialDirectory 'status[7].ps1'
+        $source = @'
+& (Join-Path $PSHOME 'pwsh.exe') -NoProfile -NonInteractive -Command 'exit 7' && 'dependent ran'
+exit $LASTEXITCODE
+'@
+        [IO.File]::WriteAllText($wrapper, $source, $utf8)
+        $output = @(& $engine -NoProfile -NonInteractive -File $wrapper)
+        $code = $LASTEXITCODE
+        Assert-Equal 7 $code 'Standalone script did not return the native exit code'
+        Assert-Equal 0 $output.Count 'Dependent step ran after a native failure'
+    }
+
+    $rg = Get-Command -Name rg.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    $searchCheck = 'Noninteractive literal search distinguishes match, no match and input error'
+    if ($rg) {
+        Invoke-Check $searchCheck {
+            $path = Join-Path $specialDirectory 'search[8].txt'
+            $missing = Join-Path $specialDirectory 'absent.txt'
+            $needle = '-literal [1] $value &'
+            [IO.File]::WriteAllText($path, $needle, $utf8)
+            $null = '' | & $rg.Source --no-config -l -F -e $needle -- $path
+            Assert-Equal 0 $LASTEXITCODE 'Explicit file was not searched with redirected stdin'
+            $null = & $rg.Source --no-config -l -F -e 'not present' -- $path
+            Assert-Equal 1 $LASTEXITCODE 'No match was not distinguished from an error'
+            $null = & $rg.Source --no-config -l -F -e $needle -- $missing 2>$null
+            Assert-Equal 2 $LASTEXITCODE 'Missing input was not reported as an error'
+        }
+    } else {
+        Add-Skip $searchCheck 'rg.exe unavailable'
     }
 
     if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
         Invoke-Check 'Manual native exit handling preserves host preference' {
             & {
                 $PSNativeCommandUseErrorActionPreference = $true
-                $payload = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('exit 7'))
                 $code = & {
                     $ErrorActionPreference = 'Stop'
                     $PSNativeCommandUseErrorActionPreference = $false
-                    & $engine -NoLogo -NoProfile -NonInteractive -EncodedCommand $payload
+                    & $engine -NoProfile -NonInteractive -Command 'exit 7'
                     $LASTEXITCODE
                 }
                 Assert-Equal 7 $code 'Manual exit-code check was skipped'
@@ -211,10 +238,9 @@ try {
     }
 
     Invoke-Check 'Start-Process Wait PassThru and ExitCode' {
-        $payload = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('exit 7'))
         $options = @{
             FilePath = $engine
-            ArgumentList = @('-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', $payload)
+            ArgumentList = '-NoProfile -NonInteractive -Command "exit 7"'
             WorkingDirectory = $tempRoot
             WindowStyle = 'Hidden'
             Wait = $true
